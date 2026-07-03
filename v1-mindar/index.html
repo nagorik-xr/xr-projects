@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Virtual Try-On Demo</title>
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-face-aframe.prod.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+
+    .app { overflow: hidden; position: absolute; width: 100%; height: 100%; }
+
+    .brand {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 3;
+      padding: 12px 16px; text-align: center; color: #fff;
+      background: linear-gradient(rgba(0,0,0,.55), transparent);
+      pointer-events: none;
+    }
+    .brand h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+    .brand p { margin: 2px 0 0; font-size: 12px; opacity: .75; }
+
+    .tray {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 3;
+      display: flex; justify-content: center; gap: 14px;
+      padding: 14px 16px calc(18px + env(safe-area-inset-bottom));
+      background: linear-gradient(transparent, rgba(0,0,0,.6));
+    }
+    .tray button {
+      width: 64px; height: 64px; padding: 0; border-radius: 14px;
+      border: 2px solid rgba(255,255,255,.35); background: rgba(20,20,20,.55);
+      overflow: hidden; cursor: pointer; transition: transform .15s, border-color .15s;
+    }
+    .tray button img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .tray button.none { color: #fff; font-size: 11px; font-weight: 600; }
+    .tray button.selected { border-color: #4ade80; transform: scale(1.08); }
+
+    #fit-toggle {
+      position: fixed; top: 60px; right: 12px; z-index: 3;
+      padding: 8px 14px; border-radius: 20px; border: 1px solid rgba(255,255,255,.35);
+      background: rgba(20,20,20,.55); color: #fff; font-size: 13px; font-weight: 600;
+      cursor: pointer; backdrop-filter: blur(6px);
+    }
+    #fit-panel {
+      position: fixed; top: 104px; right: 12px; z-index: 3; width: 190px;
+      padding: 14px; border-radius: 14px;
+      background: rgba(15,15,20,.75); backdrop-filter: blur(8px);
+      color: #fff; display: none; flex-direction: column; gap: 10px;
+    }
+    #fit-panel.open { display: flex; }
+    #fit-panel .fit-row label {
+      display: flex; justify-content: space-between;
+      font-size: 12px; font-weight: 600; margin-bottom: 4px; opacity: .85;
+    }
+    #fit-panel input[type=range] { width: 100%; accent-color: #4ade80; }
+    .fit-actions { display: flex; justify-content: space-between; gap: 8px; }
+    .fit-actions button {
+      flex: 1; padding: 6px 10px; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.3); background: transparent;
+      color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    #fit-auto { background: rgba(74,222,128,.25); border-color: #4ade80; }
+    #fit-status { margin: 0; font-size: 11px; opacity: .7; text-align: center; min-height: 13px; }
+
+    #loading {
+      position: fixed; inset: 0; z-index: 4; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 14px;
+      background: #0b0b0f; color: #fff; text-align: center; padding: 24px;
+    }
+    #loading .spin {
+      width: 34px; height: 34px; border-radius: 50%;
+      border: 3px solid rgba(255,255,255,.2); border-top-color: #4ade80;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading p { margin: 0; font-size: 14px; opacity: .8; max-width: 260px; }
+  </style>
+
+  <script>
+    // Old three.js in A-Frame 1.4 ignores glTF transmission (clear lens) — force dark tint
+    AFRAME.registerComponent("dark-lenses", {
+      init() {
+        this.el.addEventListener("model-loaded", () => {
+          this.el.getObject3D("mesh").traverse((n) => {
+            if (!n.isMesh || !n.material) return;
+            const name = (n.material.name || "").toLowerCase();
+            if (name === "lens_interior") n.visible = false;
+            else if (name.includes("lens"))
+              n.material = new THREE.MeshStandardMaterial({
+                name, color: 0x0a0c10, transparent: true, opacity: 0.8,
+                metalness: 0.6, roughness: 0.18, side: THREE.DoubleSide,
+              });
+          });
+        });
+      },
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+      // Base fit per style, calibrated on the reference face via the test rig.
+      const styles = {
+        glasses1: { scale: 6.5, y: -0.32, z: 0, rotY: 0 },
+        glasses2: { scale: 0.42, y: -0.42, z: -0.2, rotY: -90 },
+      };
+      // Metric face width (landmarks 234-454) of the calibration face.
+      const FACE_W_REF = 15.45;
+      let current = "glasses1";
+
+      const FIT_KEY = "tryon-fit-v2";
+      const blankTweak = () => ({ size: 1, height: 0, depth: 0, tilt: 0 });
+      let fit = { auto: 1, tweaks: { glasses1: blankTweak(), glasses2: blankTweak() } };
+      try {
+        const saved = JSON.parse(localStorage.getItem(FIT_KEY) || "null");
+        if (saved && saved.tweaks) fit = saved;
+      } catch (e) {}
+
+      const sliders = {
+        size: document.getElementById("size-slider"),
+        height: document.getElementById("height-slider"),
+        depth: document.getElementById("depth-slider"),
+        tilt: document.getElementById("tilt-slider"),
+      };
+      const status = (msg) => { document.getElementById("fit-status").textContent = msg; };
+
+      const applyFit = () => {
+        Object.entries(styles).forEach(([id, s]) => {
+          const t = fit.tweaks[id];
+          const k = s.scale * fit.auto * t.size;
+          document.querySelectorAll("." + id + "-entity").forEach((e) => {
+            e.setAttribute("scale", k + " " + k + " " + k);
+            e.setAttribute("position",
+              "0 " + (s.y + t.height).toFixed(3) + " " + (s.z + t.depth).toFixed(3));
+            e.setAttribute("rotation", t.tilt + " " + s.rotY + " 0");
+          });
+        });
+        const t = fit.tweaks[current] || blankTweak();
+        document.getElementById("size-val").textContent = Math.round(t.size * 100) + "%";
+        sliders.size.value = Math.round(t.size * 100);
+        sliders.height.value = Math.round(t.height * 100);
+        sliders.depth.value = Math.round(t.depth * 100);
+        sliders.tilt.value = Math.round(t.tilt);
+        localStorage.setItem(FIT_KEY, JSON.stringify(fit));
+      };
+
+      const apply = () => {
+        Object.keys(styles).forEach((s) => {
+          document.getElementById("btn-" + s).classList.toggle("selected", s === current);
+          document.querySelectorAll("." + s + "-entity").forEach((e) =>
+            e.setAttribute("visible", s === current));
+        });
+        document.getElementById("btn-none").classList.toggle("selected", current === null);
+        applyFit(); // refresh sliders to the active style's tweaks
+      };
+
+      Object.keys(styles).forEach((s) => {
+        document.getElementById("btn-" + s).addEventListener("click", () => { current = s; apply(); });
+      });
+      document.getElementById("btn-none").addEventListener("click", () => { current = null; apply(); });
+
+      const onSlider = (name, fn) => sliders[name].addEventListener("input", (e) => {
+        if (!current) return;
+        fn(fit.tweaks[current], e.target.value);
+        applyFit();
+      });
+      onSlider("size", (t, v) => { t.size = v / 100; });
+      onSlider("height", (t, v) => { t.height = v / 100; });
+      onSlider("depth", (t, v) => { t.depth = v / 100; });
+      onSlider("tilt", (t, v) => { t.tilt = +v; });
+
+      document.getElementById("fit-reset").addEventListener("click", () => {
+        if (current) fit.tweaks[current] = blankTweak();
+        applyFit();
+      });
+      document.getElementById("fit-toggle").addEventListener("click", () => {
+        document.getElementById("fit-panel").classList.toggle("open");
+      });
+
+      // --- Auto-fit: measure the user's real face width from MindAR's
+      // metric landmarks (234 = left temple, 454 = right temple) and scale
+      // all models relative to the calibration face.
+      const measureFaceWidth = () => {
+        const sys = document.querySelector("a-scene").systems["mindar-face-system"];
+        const r = sys && sys.controller && sys.controller.lastEstimateResult;
+        if (!r || !r.metricLandmarks) return null;
+        const a = r.metricLandmarks[234], b = r.metricLandmarks[454];
+        return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+      };
+
+      let autoTimer = null;
+      const runAutoFit = () => {
+        clearInterval(autoTimer);
+        const samples = [];
+        status("measuring face…");
+        autoTimer = setInterval(() => {
+          const w = measureFaceWidth();
+          if (w) samples.push(w);
+          if (samples.length >= 15) {
+            clearInterval(autoTimer);
+            samples.sort((x, y) => x - y);
+            fit.auto = samples[Math.floor(samples.length / 2)] / FACE_W_REF;
+            applyFit();
+            status("auto-fit: " + Math.round(fit.auto * 100) + "% of reference face");
+          }
+        }, 100);
+      };
+      document.getElementById("fit-auto").addEventListener("click", runAutoFit);
+
+      apply();
+
+      const scene = document.querySelector("a-scene");
+      scene.addEventListener("arReady", () => {
+        document.getElementById("loading").style.display = "none";
+      });
+      // Auto-fit once when a face first appears
+      let autoRan = false;
+      scene.addEventListener("targetFound", () => {
+        if (autoRan) return;
+        autoRan = true;
+        setTimeout(runAutoFit, 800);
+      });
+    });
+  </script>
+</head>
+
+<body>
+  <div class="app">
+    <div id="loading">
+      <div class="spin"></div>
+      <p>Starting camera&hellip;<br/>Allow camera access when prompted.</p>
+    </div>
+
+    <div class="brand">
+      <h1>Virtual Try-On</h1>
+      <p>WebAR demo &mdash; pick a style below</p>
+    </div>
+
+    <button id="fit-toggle" title="Adjust fit">&#9881; Fit</button>
+    <div id="fit-panel">
+      <div class="fit-row">
+        <label>Size <span id="size-val">100%</span></label>
+        <input id="size-slider" type="range" min="60" max="150" value="100" />
+      </div>
+      <div class="fit-row">
+        <label>Height</label>
+        <input id="height-slider" type="range" min="-25" max="25" value="0" />
+      </div>
+      <div class="fit-row">
+        <label>Depth</label>
+        <input id="depth-slider" type="range" min="-30" max="30" value="0" />
+      </div>
+      <div class="fit-row">
+        <label>Tilt</label>
+        <input id="tilt-slider" type="range" min="-15" max="15" value="0" />
+      </div>
+      <div class="fit-actions">
+        <button id="fit-auto">Auto-fit</button>
+        <button id="fit-reset">Reset</button>
+      </div>
+      <p id="fit-status"></p>
+    </div>
+
+    <div class="tray">
+      <button id="btn-glasses1"><img src="./assets/sunglasses/thumbnail.png" alt="Aviator" /></button>
+      <button id="btn-glasses2"><img src="./assets/glasses2/thumbnail.png" alt="Style 2" /></button>
+      <button id="btn-none" class="none">NONE</button>
+    </div>
+
+    <a-scene mindar-face="filterMinCF: 0.0005; filterBeta: 0.5" embedded color-space="sRGB"
+      renderer="colorManagement: true, physicallyCorrectLights"
+      vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false">
+      <a-assets>
+        <a-asset-item id="headModel" src="./assets/sparkar/headOccluder.glb"></a-asset-item>
+        <a-asset-item id="glassesModel" src="./assets/sunglasses/SunglassesKhronos.glb"></a-asset-item>
+        <a-asset-item id="glassesModel2" src="./assets/glasses2/scene.gltf"></a-asset-item>
+      </a-assets>
+
+      <a-camera active="false" position="0 0 0" look-controls="enabled: false"></a-camera>
+
+      <!-- head occluder: hides glasses temples behind the head -->
+      <a-entity mindar-face-target="anchorIndex: 168">
+        <a-gltf-model mindar-face-occluder position="0 -0.3 0.15" rotation="0 0 0"
+          scale="0.065 0.065 0.065" src="#headModel"></a-gltf-model>
+      </a-entity>
+
+      <a-entity mindar-face-target="anchorIndex: 168">
+        <a-gltf-model dark-lenses rotation="0 0 0" position="0 -0.32 0" scale="6.5 6.5 6.5"
+          src="#glassesModel" class="glasses1-entity" visible="true"></a-gltf-model>
+      </a-entity>
+
+      <a-entity mindar-face-target="anchorIndex: 168">
+        <a-gltf-model rotation="0 -90 0" position="0 -0.42 -0.2" scale="0.42 0.42 0.42"
+          src="#glassesModel2" class="glasses2-entity" visible="false"></a-gltf-model>
+      </a-entity>
+    </a-scene>
+  </div>
+</body>
+</html>
