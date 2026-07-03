@@ -30,6 +30,13 @@ Sunglasses virtual try-on, WebAR. Successor to v1 (MindAR) — switched for fit 
 | Own VTO on `jeeliz/jeelizFaceFilter` (open-source tracker) + three.js | Any GLB, full freedom, same tracker family — ~1–2 days dev |
 | v1 (MindAR) in this repo | Already loads any GLB — lower tracking quality |
 
+## Repo & deployment
+- **Repo:** `github.com/nagorik-xr/xr-projects` (public, org-owned — separate from any personal namespace).
+- **Live:** https://nagorik-xr.github.io/xr-projects/ (gallery) → `/v2-jeeliz/` (this demo) + `/v1-mindar/` (archive).
+- **Hosting:** GitHub Pages, `main` branch, root path. Deploy = commit + push to `main`, live in ~1 min. No build step, no secrets, no CI.
+- **Layout:** repo root = gallery `index.html`; each demo is a self-contained folder (`v1-mindar/`, `v2-jeeliz/`) with its own `ENGINE.md`. Add future demos as new top-level folders + a gallery card.
+- Camera requires HTTPS — Pages provides it; that's why local-network testing failed (no trusted cert on phone) and tunnels were blocked (network allows only ports 80/443).
+
 ## Known limits
 - Models require Jeeliz CDN — offline demo impossible in v2 (v1 is fully self-hosted).
 - Drag adjustments reset on model switch (engine behavior).
