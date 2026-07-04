@@ -78,6 +78,53 @@
     /* While adjusting: clear the stage so the canvas gets every pointer event */
     body.adjusting .tray, body.adjusting #adjust-btn { display: none; }
 
+    /* shutter button */
+    #shutter {
+      position: fixed; right: 16px; bottom: 118px; z-index: 10;
+      width: 62px; height: 62px; border-radius: 50%; cursor: pointer;
+      border: 3px solid #fff; background: rgba(20,20,20,.5);
+      display: flex; align-items: center; justify-content: center;
+      backdrop-filter: blur(6px); transition: transform .12s;
+    }
+    #shutter:active { transform: scale(.92); }
+    #shutter::after {
+      content: ""; width: 44px; height: 44px; border-radius: 50%;
+      background: #fff; transition: background .12s;
+    }
+    #shutter:disabled { opacity: .4; cursor: default; }
+    body.adjusting #shutter { display: none; }
+
+    /* white flash on capture */
+    #flash {
+      position: fixed; inset: 0; z-index: 30; background: #fff;
+      opacity: 0; pointer-events: none;
+    }
+    #flash.fire { animation: flash .35s ease-out; }
+    @keyframes flash { 0% { opacity: .85; } 100% { opacity: 0; } }
+
+    /* photo preview overlay */
+    #preview {
+      position: fixed; inset: 0; z-index: 40; display: none;
+      flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+      background: rgba(8,8,11,.92); padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
+      backdrop-filter: blur(4px);
+    }
+    #preview.open { display: flex; }
+    #preview img {
+      max-width: 100%; max-height: 68vh; border-radius: 14px;
+      box-shadow: 0 18px 50px rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.12);
+    }
+    #preview .actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+    #preview .actions button, #preview .actions a {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 12px 20px; border-radius: 12px; font-size: 14px; font-weight: 600;
+      text-decoration: none; cursor: pointer; border: 1px solid rgba(255,255,255,.3);
+      background: rgba(255,255,255,.08); color: #fff;
+    }
+    #preview .actions .primary { background: #4ade80; border-color: #4ade80; color: #06210f; }
+    #preview .actions .ghost { background: transparent; }
+    #preview .hint { color: rgba(255,255,255,.55); font-size: 12px; text-align: center; margin: 0; }
+
     #JeelizVTOWidgetLoading {
       position: fixed; inset: 0; z-index: 12; display: flex; flex-direction: column;
       align-items: center; justify-content: center; gap: 14px;
@@ -123,6 +170,58 @@
       JEELIZVTOWIDGET.enter_adjustMode();
     }
 
+    // Draw a subtle brand watermark onto the captured 2D canvas, bottom-right.
+    function watermark(canvas) {
+      const ctx = canvas.getContext("2d");
+      const pad = Math.round(canvas.width * 0.028);
+      const size = Math.max(13, Math.round(canvas.width * 0.026));
+      ctx.save();
+      ctx.font = "600 " + size + "px -apple-system, Segoe UI, sans-serif";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "bottom";
+      const text = "nagorik-xr · virtual try-on";
+      ctx.shadowColor = "rgba(0,0,0,.55)";
+      ctx.shadowBlur = size * 0.5;
+      ctx.fillStyle = "rgba(255,255,255,.92)";
+      ctx.fillText(text, canvas.width - pad, canvas.height - pad);
+      ctx.restore();
+    }
+
+    let lastDataURL = null;
+
+    function take_photo() {
+      const shutter = document.getElementById("shutter");
+      if (shutter.disabled) return;
+      shutter.disabled = true;
+
+      // capture_image(scaleFactor, callback, isAllocate): callback gets a 2D
+      // canvas with the full composite (camera + glasses + lighting), because
+      // Jeeliz renders the video through WebGL into one canvas.
+      JEELIZVTOWIDGET.capture_image(1, (canvas) => {
+        watermark(canvas);
+        lastDataURL = canvas.toDataURL("image/png");
+
+        const flash = document.getElementById("flash");
+        flash.classList.remove("fire"); void flash.offsetWidth; flash.classList.add("fire");
+
+        document.getElementById("preview-img").src = lastDataURL;
+        document.getElementById("pv-save").href = lastDataURL;
+        document.getElementById("preview").classList.add("open");
+        shutter.disabled = false;
+      }, false);
+    }
+
+    async function share_photo() {
+      if (!lastDataURL) return;
+      try {
+        const blob = await (await fetch(lastDataURL)).blob();
+        const file = new File([blob], "tryon.png", { type: "image/png" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: "My virtual try-on" });
+        }
+      } catch (e) { /* user cancelled or unsupported — Save still works */ }
+    }
+
     function main() {
       // Done button: exit adjust mode and restore UI (widget may or may not
       // bind its own handler — exit_adjustMode is safe to call redundantly)
@@ -130,6 +229,17 @@
         JEELIZVTOWIDGET.exit_adjustMode();
         document.body.classList.remove("adjusting");
       });
+
+      document.getElementById("shutter").addEventListener("click", take_photo);
+      document.getElementById("pv-share").addEventListener("click", share_photo);
+      document.getElementById("pv-retake").addEventListener("click", () =>
+        document.getElementById("preview").classList.remove("open"));
+      // Show Share button only where file-sharing is supported (mobile mainly)
+      try {
+        const probe = new File([new Blob()], "x.png", { type: "image/png" });
+        if (navigator.canShare && navigator.canShare({ files: [probe] }))
+          document.getElementById("pv-share").style.display = "inline-flex";
+      } catch (e) {}
 
       const tray = document.getElementById("tray");
       MODELS.forEach(({ sku, label }) => {
@@ -153,6 +263,7 @@
         searchImageColor: 0x0b0b0f,
         callbackReady: () => {
           document.querySelector('.tray button[data-sku="' + currentSku + '"]').classList.add("selected");
+          document.getElementById("shutter").disabled = false;
           console.log("JEELIZVTOWIDGET ready");
         },
         onError: (errorLabel) => {
@@ -190,6 +301,20 @@
     </div>
   </div>
 
+  <button id="shutter" title="Take photo" aria-label="Take photo" disabled></button>
+
   <div class="tray" id="tray"></div>
+
+  <div id="flash"></div>
+
+  <div id="preview" role="dialog" aria-modal="true" aria-label="Photo preview">
+    <img id="preview-img" alt="Your virtual try-on photo" />
+    <div class="actions">
+      <a id="pv-save" class="primary" download="tryon.png">&#8595; Save</a>
+      <button id="pv-share" class="ghost" style="display:none">&#8663; Share</button>
+      <button id="pv-retake" class="ghost">&#8634; Retake</button>
+    </div>
+    <p class="hint" id="pv-hint">Saved to your device. On iPhone, tap Share to save to Photos.</p>
+  </div>
 </body>
 </html>
