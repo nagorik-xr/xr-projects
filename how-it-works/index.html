@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>How It Works — WebAR Try-On</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🕶️</text></svg>" />
+</head>
+<body>
+<style>
+  :root {
+    --bg: #EDEFF1;
+    --surface: #F8F9FA;
+    --surface-2: #FFFFFF;
+    --ink: #191C21;
+    --muted: #5A6570;
+    --faint: #8A94A0;
+    --line: #D4DADE;
+    --amber: #B8721A;
+    --amber-soft: #E9A13C;
+    --track: #1E9E51;
+    --lens: #4A6B78;
+    --shadow: 20px 20px 60px rgba(25, 40, 55, .08);
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151A;
+      --surface: #1A1F26;
+      --surface-2: #20262E;
+      --ink: #E9ECEF;
+      --muted: #96A2AE;
+      --faint: #6B7783;
+      --line: #2B333D;
+      --amber: #E9A13C;
+      --amber-soft: #C6851F;
+      --track: #4ADE80;
+      --lens: #6C93A1;
+      --shadow: 24px 24px 70px rgba(0, 0, 0, .35);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #EDEFF1; --surface: #F8F9FA; --surface-2: #FFFFFF;
+    --ink: #191C21; --muted: #5A6570; --faint: #8A94A0; --line: #D4DADE;
+    --amber: #B8721A; --amber-soft: #E9A13C; --track: #1E9E51; --lens: #4A6B78;
+    --shadow: 20px 20px 60px rgba(25, 40, 55, .08);
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151A; --surface: #1A1F26; --surface-2: #20262E;
+    --ink: #E9ECEF; --muted: #96A2AE; --faint: #6B7783; --line: #2B333D;
+    --amber: #E9A13C; --amber-soft: #C6851F; --track: #4ADE80; --lens: #6C93A1;
+    --shadow: 24px 24px 70px rgba(0, 0, 0, .35);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  .page {
+    background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 24px 80px;
+    overflow-x: hidden;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+    letter-spacing: .22em; text-transform: uppercase; color: var(--amber);
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .eyebrow::before {
+    content: ""; width: 22px; height: 1px; background: var(--amber); opacity: .6;
+  }
+
+  h1, h2, h3 { text-wrap: balance; margin: 0; letter-spacing: -.02em; }
+  h1 { font-size: clamp(34px, 6vw, 58px); font-weight: 800; line-height: 1.02; }
+  h2 { font-size: clamp(24px, 3.6vw, 34px); font-weight: 750; }
+  h3 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+  p { margin: 0; }
+  .lede { font-size: clamp(16px, 2.1vw, 19px); color: var(--muted); max-width: 62ch; }
+
+  /* ---- viewfinder framing ---- */
+  .vf { position: relative; }
+  .vf::before, .vf::after,
+  .vf > .c-tr, .vf > .c-bl {
+    content: ""; position: absolute; width: 16px; height: 16px;
+    border: 1.5px solid var(--amber); opacity: .55; pointer-events: none;
+  }
+  .vf::before { top: 0; left: 0; border-right: 0; border-bottom: 0; }
+  .vf::after { bottom: 0; right: 0; border-left: 0; border-top: 0; }
+  .vf > .c-tr { top: 0; right: 0; border-left: 0; border-bottom: 0; }
+  .vf > .c-bl { bottom: 0; left: 0; border-right: 0; border-top: 0; }
+
+  /* ---- hero ---- */
+  .hero {
+    padding: 64px 0 56px; position: relative;
+    display: grid; grid-template-columns: 1.15fr .85fr; gap: 40px; align-items: center;
+  }
+  .hero-copy { position: relative; z-index: 2; }
+  .hero h1 { margin: 18px 0 20px; }
+  .hero h1 .g { color: var(--amber); }
+  .hero-meta {
+    margin-top: 28px; display: flex; flex-wrap: wrap; gap: 10px;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .04em;
+  }
+  .chip {
+    border: 1px solid var(--line); border-radius: 999px; padding: 6px 13px;
+    color: var(--muted); background: var(--surface);
+  }
+  .chip b { color: var(--ink); font-weight: 600; }
+
+  .scanner {
+    position: relative; aspect-ratio: 3 / 3.4; border-radius: 14px;
+    background:
+      radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--lens) 12%, var(--surface)), var(--surface));
+    border: 1px solid var(--line); overflow: hidden; box-shadow: var(--shadow);
+  }
+  .scanner canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .scanner .hud {
+    position: absolute; left: 12px; bottom: 11px; z-index: 3;
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em;
+    color: var(--track); display: flex; align-items: center; gap: 7px;
+  }
+  .scanner .hud .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--track);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--track) 60%, transparent);
+    animation: ping 2s ease-out infinite;
+  }
+  .scanner .tr {
+    position: absolute; top: 11px; right: 13px; z-index: 3;
+    font-family: var(--mono); font-size: 10px; letter-spacing: .12em;
+    color: var(--faint); text-transform: uppercase;
+  }
+  @keyframes ping {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--track) 55%, transparent); }
+    70% { box-shadow: 0 0 0 9px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+
+  section { padding: 46px 0 0; }
+  .sec-head { margin-bottom: 26px; }
+  .sec-head h2 { margin: 12px 0 10px; }
+
+  /* ---- two jobs ---- */
+  .jobs { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .job {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 24px 22px 22px; position: relative;
+  }
+  .job .n {
+    font-family: var(--mono); font-size: 12px; color: var(--amber);
+    font-weight: 600; letter-spacing: .05em;
+  }
+  .job h3 { margin: 10px 0 8px; }
+  .job p { color: var(--muted); font-size: 14.5px; }
+
+  /* ---- pipeline comparison ---- */
+  .cmp-strip {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 28px;
+  }
+  .cmp-tag {
+    border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px;
+    background: var(--surface); display: flex; gap: 14px; align-items: baseline;
+  }
+  .cmp-tag .v {
+    font-family: var(--mono); font-weight: 700; font-size: 13px;
+    color: var(--ink); letter-spacing: .04em; white-space: nowrap;
+  }
+  .cmp-tag .d { font-size: 13.5px; color: var(--muted); }
+  .cmp-tag.v2 { border-color: color-mix(in srgb, var(--amber) 45%, var(--line)); }
+  .cmp-tag.v2 .v { color: var(--amber); }
+
+  .rail { position: relative; display: flex; flex-direction: column; gap: 14px; }
+  .rail-label {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--faint); margin-bottom: 4px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .rail-label .verdict { color: var(--muted); letter-spacing: .02em; text-transform: none; }
+
+  .node {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; display: grid; grid-template-columns: 30px 1fr auto; gap: 4px 16px;
+    align-items: start; position: relative;
+  }
+  .node .idx {
+    grid-row: 1 / span 2; font-family: var(--mono); font-size: 12px; font-weight: 600;
+    color: var(--faint); padding-top: 2px;
+  }
+  .node .nm { font-weight: 680; font-size: 15px; letter-spacing: -.01em; }
+  .node .nm .role { color: var(--muted); font-weight: 500; }
+  .node .desc { grid-column: 2; color: var(--muted); font-size: 14px; margin-top: 4px; }
+  .node .tag {
+    grid-row: 1 / span 2; align-self: center; font-family: var(--mono);
+    font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--lens); border: 1px solid var(--line); border-radius: 6px;
+    padding: 4px 8px; white-space: nowrap;
+  }
+  .rail.two-col { }
+  .rails { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; align-items: start; }
+
+  .machine {
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--amber) 9%, var(--surface)), var(--surface));
+    border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--line));
+    border-radius: 12px; padding: 20px 20px 18px;
+  }
+  .machine .nm { font-weight: 720; font-size: 15.5px; }
+  .machine .cap {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--amber); margin-bottom: 10px;
+  }
+  .machine ul { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 9px; }
+  .machine li {
+    font-size: 14px; color: var(--muted); padding-left: 22px; position: relative;
+  }
+  .machine li::before {
+    content: ""; position: absolute; left: 4px; top: 8px; width: 7px; height: 7px;
+    border-radius: 50%; background: var(--track);
+  }
+  .machine .sub {
+    margin-top: 14px; padding-top: 13px; border-top: 1px dashed var(--line);
+    font-size: 13.5px; color: var(--muted);
+  }
+  .machine .sub b { color: var(--ink); font-weight: 650; }
+
+  .takeaway {
+    margin-top: 30px; border-left: 2px solid var(--amber); padding: 6px 0 6px 20px;
+    font-size: clamp(16px, 2.2vw, 19px); color: var(--ink); max-width: 66ch;
+  }
+  .takeaway b { color: var(--amber); font-weight: 700; }
+
+  /* ---- helpers ---- */
+  .helpers { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .helper {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 22px; position: relative;
+  }
+  .helper .k {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--lens); margin-bottom: 10px;
+  }
+  .helper h3 { margin-bottom: 8px; }
+  .helper p { color: var(--muted); font-size: 14px; }
+
+  /* ---- footer / live ---- */
+  .live {
+    margin-top: 46px; border: 1px solid var(--line); border-radius: 14px;
+    background: var(--surface-2); padding: 26px 26px; box-shadow: var(--shadow);
+    display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap;
+  }
+  .live .k { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--track); }
+  .live h3 { margin: 8px 0 4px; }
+  .live a {
+    font-family: var(--mono); font-size: 14px; color: var(--amber); text-decoration: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
+    word-break: break-all;
+  }
+  .live a:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+  .live .note { color: var(--faint); font-size: 13px; margin-top: 6px; }
+
+  footer.foot {
+    margin-top: 40px; text-align: center; font-family: var(--mono);
+    font-size: 11px; letter-spacing: .1em; color: var(--faint);
+  }
+
+  @media (max-width: 720px) {
+    .hero { grid-template-columns: 1fr; gap: 30px; padding: 44px 0 40px; }
+    .scanner { max-width: 320px; }
+    .jobs, .cmp-strip, .rails, .helpers { grid-template-columns: 1fr; }
+    .rails { gap: 30px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .scanner .hud .dot { animation: none; }
+  }
+</style>
+
+<div class="page">
+  <div class="wrap">
+
+    <header class="hero vf">
+      <span class="c-tr"></span><span class="c-bl"></span>
+      <div class="hero-copy">
+        <span class="eyebrow">Field guide · how it works</span>
+        <h1>Putting <span class="g">real glasses</span> on a face, live through a phone camera.</h1>
+        <p class="lede">A plain-language walkthrough of the two ways we built the virtual try-on — what each piece does, and why the second version fits so much better. No technical background needed.</p>
+        <div class="hero-meta">
+          <span class="chip"><b>v1</b> &nbsp;MindAR — assembled by hand</span>
+          <span class="chip"><b>v2</b> &nbsp;Jeeliz — one purpose-built engine</span>
+        </div>
+      </div>
+      <div class="scanner" aria-hidden="true">
+        <canvas id="mesh"></canvas>
+        <span class="tr">FACE · LOCK</span>
+        <span class="hud"><span class="dot"></span>TRACKING 468 PTS</span>
+      </div>
+    </header>
+
+    <section>
+      <div class="sec-head">
+        <span class="eyebrow">The core idea</span>
+        <h2>Every try-on does the same two jobs</h2>
+        <p class="lede">Thirty-plus times a second, without you noticing. The whole difference between our two versions is just <em>who does each job</em>.</p>
+      </div>
+      <div class="jobs">
+        <div class="job vf">
+          <span class="c-tr"></span><span class="c-bl"></span>
+          <div class="n">JOB 01</div>
+          <h3>Find the face</h3>
+          <p>Watch the live video and work out where the eyes and nose are, and which way the head is turned — right now, and again a moment later as you move.</p>
+        </div>
+        <div class="job vf">
+          <span class="c-tr"></span><span class="c-bl"></span>
+          <div class="n">JOB 02</div>
+          <h3>Draw the glasses</h3>
+          <p>Paint a 3D pair of glasses on top of the video, sized and angled to match that face, so they look like they're really being worn.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <span class="eyebrow">The two builds</span>
+        <h2>Assemble the parts, or buy the machine</h2>
+        <p class="lede">Version 1 wires several separate tools together by hand. Version 2 hands the whole job to one specialist. Notice how many boxes each one needs.</p>
+      </div>
+
+      <div class="cmp-strip">
+        <div class="cmp-tag">
+          <span class="v">v1 · MindAR</span>
+          <span class="d">A <b>general</b> face tracker — tracks any face for any purpose. Flexible, but never a perfect fit.</span>
+        </div>
+        <div class="cmp-tag v2">
+          <span class="v">v2 · Jeeliz</span>
+          <span class="d">An engine trained <b>only</b> on faces wearing glasses. Less flexible, dramatically more accurate.</span>
+        </div>
+      </div>
+
+      <div class="rails">
+        <div class="rail">
+          <div class="rail-label"><span>v1 — the assembled chain</span></div>
+
+          <div class="node">
+            <span class="idx">01</span>
+            <span class="nm">Camera feed <span class="role">· the browser</span></span>
+            <span class="tag">input</span>
+            <span class="desc">The browser asks "may I use the camera?" and hands back live video. It only allows this on secure <span style="font-family:var(--mono);font-size:12.5px">https://</span> sites — which caused our phone-testing headaches later.</span>
+          </div>
+
+          <div class="node">
+            <span class="idx">02</span>
+            <span class="nm">MindAR <span class="role">· the face-finder</span></span>
+            <span class="tag">job 01</span>
+            <span class="desc">Drops 468 invisible dots on your face — eye corners, nose tip, jaw. We pinned the glasses to the dot on the bridge of the nose.</span>
+          </div>
+
+          <div class="node">
+            <span class="idx">03</span>
+            <span class="nm">A-Frame + three.js <span class="role">· the 3D painter</span></span>
+            <span class="tag">job 02</span>
+            <span class="desc">three.js draws the glasses with light and shadow; A-Frame is the easy shorthand for talking to it, so we write simple tags instead of pages of code.</span>
+          </div>
+
+          <div class="node">
+            <span class="idx">04</span>
+            <span class="nm">The GLB file <span class="role">· the glasses</span></span>
+            <span class="tag">asset</span>
+            <span class="desc">The glasses themselves as a 3D file — think "a JPG, but for a 3D object," carrying its shape, colours and materials.</span>
+          </div>
+
+          <div class="node">
+            <span class="idx">05</span>
+            <span class="nm">Manual tuning <span class="role">· by hand</span></span>
+            <span class="tag">us</span>
+            <span class="desc">No automatic fit. Size and height were nudged by trial and error until the glasses sat on the nose.</span>
+          </div>
+
+          <div class="rail-label" style="margin-top:6px">
+            <span>result</span>
+            <span class="verdict">Works, but jittery — a general tracker guesses your head size and depth, so the fit is never quite right.</span>
+          </div>
+        </div>
+
+        <div class="rail">
+          <div class="rail-label"><span>v2 — the sealed machine</span></div>
+
+          <div class="node">
+            <span class="idx">01</span>
+            <span class="nm">Camera feed <span class="role">· the browser</span></span>
+            <span class="tag">input</span>
+            <span class="desc">Exactly the same starting point — live video, secure site.</span>
+          </div>
+
+          <div class="machine vf">
+            <span class="c-tr"></span><span class="c-bl"></span>
+            <div class="cap">02 · one engine, both jobs</div>
+            <div class="nm">Jeeliz VTO</div>
+            <p style="color:var(--muted);font-size:14px;margin-top:6px">An AI trained only on faces wearing glasses. Inside one box it:</p>
+            <ul>
+              <li>finds the face <em>and</em> measures its real size, so glasses auto-fit — no tuning</li>
+              <li>hides the glasses' arms behind your head so they look real</li>
+              <li>adds true-to-life lighting and reflections on the lenses</li>
+            </ul>
+          </div>
+
+          <div class="node">
+            <span class="idx">03</span>
+            <span class="nm">Model library <span class="role">· real Ray-Bans</span></span>
+            <span class="tag">asset</span>
+            <span class="desc">Actual Ray-Ban frames streamed live by product code (a "SKU"). We didn't build them — we just name the ones to show.</span>
+          </div>
+
+          <div class="node">
+            <span class="idx">04</span>
+            <span class="nm">Our part <span class="role">· the trim</span></span>
+            <span class="tag">us</span>
+            <span class="desc">Choose the models, build the scrolling thumbnail bar, style the buttons, fix one bug that froze the "Adjust" screen.</span>
+          </div>
+
+          <div class="rail-label" style="margin-top:6px">
+            <span>result</span>
+            <span class="verdict">Accurate, stable, better-looking. Trade-off: it needs internet, and your own custom frames need their paid service.</span>
+          </div>
+        </div>
+      </div>
+
+      <p class="takeaway">In one line: for v1 we were the engineers wiring a face-tracker to a 3D painter by hand. For v2 we let a <b>purpose-built glasses-machine</b> do it, and just decorated the outside.</p>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <span class="eyebrow">Behind the scenes</span>
+        <h2>Two helpers that made it real</h2>
+        <p class="lede">Neither is part of the app you see — but without them there'd be nothing to show on a phone.</p>
+      </div>
+      <div class="helpers">
+        <div class="helper vf">
+          <span class="c-tr"></span><span class="c-bl"></span>
+          <div class="k">Testing trick</div>
+          <h3>The synthetic face</h3>
+          <p>I can't hold your phone up to check the fit. So I ran an invisible browser on the Mac and secretly fed it a <em>photo of a face pretending to be a webcam</em>, then took screenshots — checking every model and every adjustment without a real person in front of a camera.</p>
+        </div>
+        <div class="helper vf">
+          <span class="c-tr"></span><span class="c-bl"></span>
+          <div class="k">Getting it online</div>
+          <h3>Free, secure hosting</h3>
+          <p>Your laptop's local copy can't be opened by your phone. GitHub Pages puts the demo on a real public web address with the secure <span style="font-family:var(--mono);font-size:12.5px">https://</span> that cameras require — so any phone just scans a code and it works.</p>
+        </div>
+      </div>
+    </section>
+
+    <div class="live vf">
+      <span class="c-tr"></span><span class="c-bl"></span>
+      <div>
+        <div class="k">● Live now</div>
+        <h3>Try it on a phone</h3>
+        <a href="https://nagorik-xr.github.io/xr-projects/">nagorik-xr.github.io/xr-projects</a>
+        <p class="note">Open on a phone, allow the camera, pick a frame. v2 is the front door; v1 stays parked for comparison.</p>
+      </div>
+    </div>
+
+    <footer class="foot">WEBAR VIRTUAL TRY-ON · FIELD GUIDE</footer>
+
+  </div>
+</div>
+
+<script>
+  (function () {
+    var canvas = document.getElementById("mesh");
+    if (!canvas) return;
+    var ctx = canvas.getContext("2d");
+    var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var pts = [], W = 0, H = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    function color(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim() ||
+             getComputedStyle(canvas).getPropertyValue(name).trim();
+    }
+
+    function build() {
+      var r = canvas.getBoundingClientRect();
+      W = r.width; H = r.height;
+      canvas.width = W * dpr; canvas.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      pts = [];
+      // face-shaped point cloud: points inside an egg-ish ellipse
+      var cx = W * 0.5, cy = H * 0.47, rx = W * 0.30, ry = H * 0.36;
+      var N = 78;
+      for (var i = 0; i < N; i++) {
+        var a = Math.random() * Math.PI * 2;
+        var rr = Math.sqrt(Math.random());
+        var x = cx + Math.cos(a) * rx * rr;
+        var y = cy + Math.sin(a) * ry * rr * (1 + 0.14 * Math.sin(a)); // slight chin
+        pts.push({ x: x, y: y, bx: x, by: y, ph: Math.random() * Math.PI * 2 });
+      }
+      // nose-bridge anchor (the green locked point)
+      pts.push({ x: cx, y: cy - ry * 0.08, bx: cx, by: cy - ry * 0.08, ph: 0, anchor: true });
+    }
+
+    function frame(t) {
+      ctx.clearRect(0, 0, W, H);
+      var amber = color("--amber") || "#E9A13C";
+      var track = color("--track") || "#4ADE80";
+      var line = color("--line") || "#2B333D";
+      t = t || 0;
+
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i];
+        if (!reduce) {
+          p.x = p.bx + Math.sin(t / 1600 + p.ph) * 3.2;
+          p.y = p.by + Math.cos(t / 1900 + p.ph) * 3.2;
+        }
+      }
+      // connect near neighbours -> mesh
+      ctx.lineWidth = 1;
+      for (var i = 0; i < pts.length; i++) {
+        for (var j = i + 1; j < pts.length; j++) {
+          var dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y;
+          var d = Math.sqrt(dx * dx + dy * dy);
+          if (d < W * 0.15) {
+            ctx.globalAlpha = (1 - d / (W * 0.15)) * 0.34;
+            ctx.strokeStyle = line;
+            ctx.beginPath(); ctx.moveTo(pts[i].x, pts[i].y); ctx.lineTo(pts[j].x, pts[j].y); ctx.stroke();
+          }
+        }
+      }
+      // points
+      ctx.globalAlpha = 1;
+      for (var i = 0; i < pts.length; i++) {
+        var p = pts[i];
+        if (p.anchor) {
+          var pulse = reduce ? 3.4 : 3.4 + Math.sin(t / 400) * 1.1;
+          ctx.beginPath(); ctx.fillStyle = track;
+          ctx.arc(p.x, p.y, pulse, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 0.25; ctx.beginPath();
+          ctx.arc(p.x, p.y, pulse + 5, 0, Math.PI * 2); ctx.strokeStyle = track; ctx.stroke();
+          ctx.globalAlpha = 1;
+        } else {
+          ctx.beginPath(); ctx.fillStyle = amber; ctx.globalAlpha = 0.85;
+          ctx.arc(p.x, p.y, 1.7, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
+      if (!reduce) raf = requestAnimationFrame(frame);
+    }
+
+    var raf;
+    build();
+    frame(0);
+    if (reduce) frame(0);
+    window.addEventListener("resize", function () {
+      cancelAnimationFrame(raf); build(); if (!reduce) raf = requestAnimationFrame(frame); else frame(0);
+    });
+  })();
+</script>
+</body>
+</html>
